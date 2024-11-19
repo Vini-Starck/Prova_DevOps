@@ -1,11 +1,10 @@
 from flask import Flask, render_template, request, redirect, url_for, flash
-import pyodbc
 import os
-import requests
+import pyodbc
+import paramiko
+from werkzeug.utils import secure_filename
 from azure.cognitiveservices.vision.face import FaceClient
 from msrest.authentication import CognitiveServicesCredentials
-from werkzeug.utils import secure_filename
-import paramiko
 
 app = Flask(__name__)
 app.secret_key = 'ff91935200508524ead9d3e6220966a3'
@@ -39,7 +38,7 @@ def allowed_image_file(filename):
 
 # Função para verificar se a extensão do arquivo de documento é permitida
 def allowed_document_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS_DOCS or True  # Allow all file types
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS_DOCS
 
 # Função para conectar ao banco de dados
 def get_db_connection():
@@ -49,11 +48,8 @@ def get_db_connection():
 # Função para enviar arquivos para a VM via SFTP (usando paramiko)
 def send_file_to_vm(vm_ip, vm_user, vm_password, file_path, remote_path):
     try:
-        # Conectar à VM via SSH
         transport = paramiko.Transport((vm_ip, 22))
         transport.connect(username=vm_user, password=vm_password)
-        
-        # Usar SFTP para enviar o arquivo
         sftp = paramiko.SFTPClient.from_transport(transport)
         sftp.put(file_path, remote_path)
         sftp.close()
@@ -80,9 +76,15 @@ def register():
         if photo and allowed_image_file(photo.filename):
             filename = secure_filename(photo.filename)
             photo_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+
+            # Verificar o tamanho do arquivo (máximo 4MB)
+            if photo.content_length > 4 * 1024 * 1024:
+                flash('A imagem é muito grande. O tamanho máximo permitido é 4 MB.', 'error')
+                return redirect(url_for('register'))
+
             photo.save(photo_path)
 
-            # Verificar se há uma pessoa na foto usando o serviço cognitivo do Azure
+            # Verificar se há uma pessoa na foto usando o serviço cognitivo
             try:
                 with open(photo_path, 'rb') as photo_file:
                     detected_faces = FACE_CLIENT.face.detect_with_stream(photo_file)
