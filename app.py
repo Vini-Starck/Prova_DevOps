@@ -29,7 +29,7 @@ ALLOWED_EXTENSIONS_DOCS = {'pdf', 'txt', 'docx', 'xlsx', 'pptx', 'csv'}
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# Garantir que o diretório de uploads existe
+# Garantir que o diretório de uploads exista
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
@@ -128,6 +128,7 @@ def register():
                 # Caminho remoto para a foto na VM Windows (diretório C:\Users\azureuser\Pictures)
                 remote_photo_path_windows = f'C:/Users/azureuser/Pictures/{filename}'
                 remote_document_path_linux = f'/home/azureuser/documentos/{document_filename}'
+
                 # Enviar a foto para a VM Windows
                 send_file_to_vm(vm_windows_ip, vm_user, vm_password, photo_path, remote_photo_path_windows)
 
@@ -136,7 +137,6 @@ def register():
                 document_path = os.path.join(app.config['UPLOAD_FOLDER'], document_filename)
                 document.save(document_path)
                 send_file_to_vm(vm_linux_ip, vm_user, vm_password, document_path, remote_document_path_linux)
-
 
                 flash('Usuário registrado com sucesso e arquivos enviados!', 'success')
                 logging.debug("Processo concluído com sucesso!")
