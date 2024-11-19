@@ -1,0 +1,4 @@
+Flask
+pyodbc
+azure-cognitiveservices-vision-face
+requests
