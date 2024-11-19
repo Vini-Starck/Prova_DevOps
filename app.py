@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, redirect, url_for, flash
 import os
 import pyodbc
 import paramiko
+import logging
 from werkzeug.utils import secure_filename
 from azure.cognitiveservices.vision.face import FaceClient
 from msrest.authentication import CognitiveServicesCredentials
@@ -54,10 +55,13 @@ def send_file_to_vm(vm_ip, vm_user, vm_password, file_path, remote_path):
         sftp.put(file_path, remote_path)
         sftp.close()
         transport.close()
-        print(f"Arquivo {file_path} enviado com sucesso para {vm_ip}:{remote_path}")
+        logging.debug(f"Arquivo {file_path} enviado com sucesso para {vm_ip}:{remote_path}")
     except Exception as e:
-        print(f"Erro ao enviar arquivo para {vm_ip}: {e}")
+        logging.error(f"Erro ao enviar arquivo para {vm_ip}: {e}")
         raise  # Levanta a exceção para ser capturada no fluxo principal
+
+# Configuração de logging
+logging.basicConfig(level=logging.DEBUG)
 
 # Página inicial
 @app.route('/')
@@ -68,30 +72,41 @@ def index():
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
+        logging.debug("Iniciando o processo de registro...")
+        
         name = request.form['name']
         email = request.form['email']
         photo = request.files['photo']
         document = request.files['document']
 
         try:
+            logging.debug(f"Nome: {name}, Email: {email}")
+            
             # Validar e salvar a foto
             if photo and allowed_image_file(photo.filename):
+                logging.debug(f"Foto recebida: {photo.filename}")
                 filename = secure_filename(photo.filename)
                 photo_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-
+                logging.debug(f"Salvando foto em: {photo_path}")
+                
                 # Verificar o tamanho do arquivo (máximo 4MB)
                 if photo.content_length > 4 * 1024 * 1024:
                     flash('A imagem é muito grande. O tamanho máximo permitido é 4 MB.', 'error')
                     return redirect(url_for('register'))
 
                 photo.save(photo_path)
+                logging.debug("Foto salva com sucesso!")
 
                 # Verificar se há uma pessoa na foto usando o serviço cognitivo
-                with open(photo_path, 'rb') as photo_file:
-                    detected_faces = FACE_CLIENT.face.detect_with_stream(photo_file)
-                
-                if not detected_faces:
-                    flash('A foto não contém uma pessoa válida.', 'error')
+                try:
+                    with open(photo_path, 'rb') as photo_file:
+                        detected_faces = FACE_CLIENT.face.detect_with_stream(photo_file)
+                    if not detected_faces:
+                        flash('A foto não contém uma pessoa válida.', 'error')
+                        return redirect(url_for('register'))
+                    logging.debug("Rosto detectado com sucesso!")
+                except Exception as e:
+                    flash(f"Erro ao detectar rosto na foto: {str(e)}", 'error')
                     return redirect(url_for('register'))
 
                 # Inserir no banco de dados
@@ -100,6 +115,7 @@ def register():
                 cursor.execute("INSERT INTO Users (Name, Email, PhotoPath) VALUES (?, ?, ?)", (name, email, photo_path))
                 conn.commit()
                 cursor.close()
+                logging.debug("Usuário inserido no banco de dados com sucesso!")
 
                 # Enviar os arquivos para as VMs
                 vm_windows_ip = '4.228.62.9'
@@ -107,23 +123,20 @@ def register():
                 vm_user = 'azureuser'
                 vm_password = 'Admsenac123!'
 
-                # Definir os caminhos remotos onde os arquivos serão armazenados nas VMs
                 remote_photo_path_windows = f'/path/on/windows/vm/{filename}'
                 remote_document_path_linux = f'/path/on/linux/vm/{document.filename}'
 
                 # Enviar a foto para a VM Windows
                 send_file_to_vm(vm_windows_ip, vm_user, vm_password, photo_path, remote_photo_path_windows)
                 
-                # Salvar o documento localmente, independentemente da extensão
+                # Salvar o documento e enviar para a VM Linux
                 document_filename = secure_filename(document.filename)
                 document_path = os.path.join(app.config['UPLOAD_FOLDER'], document_filename)
                 document.save(document_path)
-                
-                # Enviar o documento para a VM Linux
                 send_file_to_vm(vm_linux_ip, vm_user, vm_password, document_path, remote_document_path_linux)
 
-                # Sucesso no registro e no envio dos arquivos
                 flash('Usuário registrado com sucesso e arquivos enviados!', 'success')
+                logging.debug("Processo concluído com sucesso!")
                 return redirect(url_for('query'))
 
             else:
@@ -132,6 +145,7 @@ def register():
 
         except Exception as e:
             flash(f"Ocorreu um erro durante o registro: {str(e)}", 'error')
+            logging.error(f"Erro durante o registro: {str(e)}")
             return redirect(url_for('register'))
 
     return render_template('register.html')
