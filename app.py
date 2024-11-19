@@ -73,7 +73,7 @@ def index():
 def register():
     if request.method == 'POST':
         logging.debug("Iniciando o processo de registro...")
-        
+
         name = request.form['name']
         email = request.form['email']
         photo = request.files['photo']
@@ -81,14 +81,14 @@ def register():
 
         try:
             logging.debug(f"Nome: {name}, Email: {email}")
-            
+
             # Validar e salvar a foto
             if photo and allowed_image_file(photo.filename):
                 logging.debug(f"Foto recebida: {photo.filename}")
                 filename = secure_filename(photo.filename)
                 photo_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
                 logging.debug(f"Salvando foto em: {photo_path}")
-                
+
                 # Verificar o tamanho do arquivo (máximo 4MB)
                 if photo.content_length > 4 * 1024 * 1024:
                     flash('A imagem é muito grande. O tamanho máximo permitido é 4 MB.', 'error')
@@ -123,17 +123,18 @@ def register():
                 vm_user = 'azureuser'
                 vm_password = 'Admsenac123!'
 
-                remote_photo_path_windows = f'/path/on/windows/vm/{filename}'
-                remote_document_path_linux = f'/path/on/linux/vm/{document.filename}'
-
+                # Caminho remoto para a foto na VM Windows (diretório C:\Users\azureuser\Pictures)
+                remote_photo_path_windows = f'C:/Users/azureuser/Pictures/{filename}'
+                remote_document_path_linux = f'/home/azureuser/documentos/{document_filename}'
                 # Enviar a foto para a VM Windows
                 send_file_to_vm(vm_windows_ip, vm_user, vm_password, photo_path, remote_photo_path_windows)
-                
+
                 # Salvar o documento e enviar para a VM Linux
                 document_filename = secure_filename(document.filename)
                 document_path = os.path.join(app.config['UPLOAD_FOLDER'], document_filename)
                 document.save(document_path)
                 send_file_to_vm(vm_linux_ip, vm_user, vm_password, document_path, remote_document_path_linux)
+
 
                 flash('Usuário registrado com sucesso e arquivos enviados!', 'success')
                 logging.debug("Processo concluído com sucesso!")
