@@ -6,7 +6,7 @@ import logging
 from werkzeug.utils import secure_filename
 from azure.cognitiveservices.vision.face import FaceClient
 from msrest.authentication import CognitiveServicesCredentials
-from PIL import Image
+from Pillow import Image
 
 app = Flask(__name__)
 app.secret_key = 'ff91935200508524ead9d3e6220966a3'
@@ -68,18 +68,13 @@ logging.basicConfig(level=logging.DEBUG)
 def is_valid_image(image_path):
     try:
         with Image.open(image_path) as img:
-            img.verify()  # Verifica se a imagem está corrompida
+            img.verify()  # Verifica se a imagem é válida, sem precisar carregá-la completamente
+            img.load()  # Força o carregamento completo da imagem
         return True
     except Exception as e:
-        logging.error(f"Imagem inválida: {e}")
+        logging.error(f"Imagem inválida ou corrompida: {e}")
         return False
 
-# Página inicial
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-# Página de registro
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
@@ -100,7 +95,10 @@ def register():
                 photo_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
                 logging.debug(f"Salvando foto em: {photo_path}")
 
-                # Verificar se a imagem é válida
+                # Salva a foto no diretório de uploads
+                photo.save(photo_path)
+
+                # Verifica se a imagem é válida
                 if not is_valid_image(photo_path):
                     flash('A imagem está corrompida ou é inválida.', 'error')
                     return redirect(url_for('register'))
@@ -110,12 +108,8 @@ def register():
                     flash('A imagem é muito grande. O tamanho máximo permitido é 4 MB.', 'error')
                     return redirect(url_for('register'))
 
-                photo.save(photo_path)
-                logging.debug("Foto salva com sucesso!")
-
                 # Verificar se há uma pessoa na foto usando o serviço cognitivo
                 try:
-                    # Tente abrir e verificar a imagem antes de enviar
                     with open(photo_path, 'rb') as photo_file:
                         detected_faces = FACE_CLIENT.face.detect_with_stream(photo_file)
                     if not detected_faces:
@@ -134,6 +128,8 @@ def register():
                 conn.commit()
                 cursor.close()
                 logging.debug("Usuário inserido no banco de dados com sucesso!")
+
+
 
                 # Enviar os arquivos para as VMs
                 vm_windows_ip = '4.228.62.9'
@@ -157,6 +153,7 @@ def register():
                 flash('Usuário registrado com sucesso e arquivos enviados!', 'success')
                 logging.debug("Processo concluído com sucesso!")
                 return redirect(url_for('query'))
+                ...
 
             else:
                 flash('Por favor, envie uma foto válida (png, jpg, jpeg).', 'error')
@@ -168,6 +165,13 @@ def register():
             return redirect(url_for('register'))
 
     return render_template('register.html')
+
+
+# Página inicial
+@app.route('/')
+def index():
+    return render_template('index.html')
+
 
 # Página de consulta
 @app.route('/query', methods=['GET', 'POST'])
