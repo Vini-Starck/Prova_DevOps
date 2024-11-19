@@ -110,8 +110,13 @@ def register():
 
                 # Verificar se há uma pessoa na foto usando o serviço cognitivo
                 try:
-                    with open(photo_path, 'rb') as photo_file:
-                        detected_faces = FACE_CLIENT.face.detect_with_stream(photo_file)
+                    # Verifique se o arquivo realmente existe e pode ser aberto antes de passar para o Azure
+                    if os.path.exists(photo_path):
+                        with open(photo_path, 'rb') as photo_file:
+                            detected_faces = FACE_CLIENT.face.detect_with_stream(photo_file)
+                    else:
+                        raise FileNotFoundError(f"O arquivo da foto não foi encontrado: {photo_path}")
+
                     if not detected_faces:
                         flash('A foto não contém uma pessoa válida.', 'error')
                         return redirect(url_for('register'))
@@ -160,8 +165,6 @@ def register():
             flash(f"Ocorreu um erro durante o registro: {str(e)}", 'error')
             logging.error(f"Erro durante o registro: {str(e)}")
             return redirect(url_for('register'))
-
-    return render_template('register.html')
 
 
 # Página inicial
