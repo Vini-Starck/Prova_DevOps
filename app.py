@@ -12,7 +12,7 @@ app = Flask(__name__)
 app.secret_key = 'ff91935200508524ead9d3e6220966a3'
 
 # Configurações do Azure
-FACE_API_KEY = 'FGwaQzEIAtIhWT3U9uvOsPTvMFEUuFQYYWTwEK0vkKbLkXxISZG3JQQJ99AKACZoyfiXJ3w3AAAKACOGpBd6'
+FACE_API_KEY = '1ZCQRsPeCOYdgsIGqFSP4DY9ATze48rWxLXu847Ec0fvWbeGCcNHJQQJ99AKACZoyfiXJ3w3AAAKACOGhRlw'
 FACE_API_ENDPOINT = 'https://safedoc-servicecog.cognitiveservices.azure.com/'
 FACE_CLIENT = FaceClient(FACE_API_ENDPOINT, CognitiveServicesCredentials(FACE_API_KEY))
 
@@ -26,7 +26,6 @@ DRIVER = '{ODBC Driver 17 for SQL Server}'
 # Configuração do diretório de uploads
 UPLOAD_FOLDER = 'uploads/'
 ALLOWED_EXTENSIONS_IMAGES = {'png', 'jpeg', 'jpg'}
-ALLOWED_EXTENSIONS_DOCS = {'pdf', 'txt', 'docx', 'xlsx', 'pptx', 'csv'}
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
@@ -37,10 +36,6 @@ if not os.path.exists(UPLOAD_FOLDER):
 # Função para verificar se a extensão do arquivo de imagem é permitida
 def allowed_image_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS_IMAGES
-
-# Função para verificar se a extensão do arquivo de documento é permitida
-def allowed_document_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS_DOCS
 
 # Função para conectar ao banco de dados
 def get_db_connection():
@@ -64,7 +59,7 @@ def send_file_to_vm(vm_ip, vm_user, vm_password, file_path, remote_path):
 # Configuração de logging
 logging.basicConfig(level=logging.DEBUG)
 
-# Função para validar se a imagem está corrompida
+# Verificar se a imagem é válida (não corrompida e não vazia)
 def is_valid_image(image_path):
     try:
         with Image.open(image_path) as img:
@@ -94,28 +89,67 @@ def register():
                 filename = secure_filename(photo.filename)
                 photo_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
                 logging.debug(f"Salvando foto em: {photo_path}")
-
+                
                 # Salva a foto no diretório de uploads
                 photo.save(photo_path)
+                logging.debug(f"{photo_path} salva com sucesso")
 
+                # Verificar se a imagem foi salva corretamente
+                if not os.path.exists(photo_path):
+                    flash('Erro ao salvar a imagem.', 'error')
+                    logging.debug(f"Erro ao salvar imagem")
+                    return redirect(url_for('register'))
+                    
                 # Verifica se a imagem é válida
                 if not is_valid_image(photo_path):
                     flash('A imagem está corrompida ou é inválida.', 'error')
+                    logging.debug(f"Imagem não é válida")
                     return redirect(url_for('register'))
 
                 # Verificar o tamanho do arquivo (máximo 4MB)
                 if photo.content_length > 4 * 1024 * 1024:
                     flash('A imagem é muito grande. O tamanho máximo permitido é 4 MB.', 'error')
+                    logging.debug(f"Imagem muito grande")
                     return redirect(url_for('register'))
 
-                # Verificar se há uma pessoa na foto usando o serviço cognitivo
+                logging.debug(f"Tipo de conteúdo do arquivo: {photo.content_type}")
+                logging.debug(f"Tamanho do arquivo: {os.path.getsize(photo_path)} bytes")
+
+                # Abrir o arquivo em modo binário
                 try:
                     with open(photo_path, 'rb') as photo_file:
-                        detected_faces = FACE_CLIENT.face.detect_with_stream(photo_file)
-                    if not detected_faces:
-                        flash('A foto não contém uma pessoa válida.', 'error')
-                        return redirect(url_for('register'))
-                    logging.debug("Rosto detectado com sucesso!")
+                        logging.debug("Arquivo de imagem aberto corretamente em modo binário.")
+                        # Garantir que o arquivo está posicionado no início
+                        photo_file.seek(0)
+                        
+                        if photo_file:
+                            logging.debug("Arquivo de imagem é válido e pronto para detecção.")
+                            
+                            # Tentar detectar rostos usando o modelo de detecção simples
+                            try:
+                                detected_faces = FACE_CLIENT.face.detect_with_stream(
+                                    photo_file,
+                                    return_face_id=True,  # Mantém a detecção do ID do rosto
+                                    return_face_landmarks=False,  # Não precisa dos marcos faciais
+                                    recognition_model='recognition_01',  # Remova isso ou altere conforme necessário
+                                    detection_model='detection_01'  # Modelo de detecção simples
+                                )
+                            except Exception as e:
+                                logging.error(f"Erro ao detectar rosto: {str(e)}")
+                                if hasattr(e, 'response') and e.response is not None:
+                                    logging.error(f"Resposta da API: {e.response.text}")
+                                flash(f"Erro ao detectar rosto na foto: {str(e)}", 'error')
+                                return redirect(url_for('register'))  # Redireciona no caso de erro
+
+                            if not detected_faces:
+                                flash('A foto não contém um rosto válido.', 'error')
+                                return redirect(url_for('register'))
+
+                            logging.debug("Rosto detectado com sucesso!")
+                        else:
+                            flash('Erro ao abrir a foto. O arquivo não é válido.', 'error')
+                            return redirect(url_for('register'))
+
                 except Exception as e:
                     flash(f"Erro ao detectar rosto na foto: {str(e)}", 'error')
                     logging.error(f"Erro ao detectar rosto na foto: {str(e)}")
@@ -162,6 +196,9 @@ def register():
             return redirect(url_for('register'))
 
     return render_template('register.html')
+
+
+
 
 
 # Página inicial
