@@ -24,7 +24,8 @@ DRIVER = '{ODBC Driver 17 for SQL Server}'
 
 # Configuração do diretório de uploads
 UPLOAD_FOLDER = 'uploads/'
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
+ALLOWED_EXTENSIONS_IMAGES = {'png', 'jpg', 'jpeg'}
+ALLOWED_EXTENSIONS_DOCS = {'pdf', 'txt', 'docx', 'xlsx', 'pptx', 'csv'}
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
@@ -32,9 +33,13 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
-# Função para verificar se a extensão do arquivo é permitida
-def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+# Função para verificar se a extensão do arquivo de imagem é permitida
+def allowed_image_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS_IMAGES
+
+# Função para verificar se a extensão do arquivo de documento é permitida
+def allowed_document_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS_DOCS or True  # Allow all file types
 
 # Função para conectar ao banco de dados
 def get_db_connection():
@@ -71,16 +76,21 @@ def register():
         photo = request.files['photo']
         document = request.files['document']
 
-        if photo and allowed_file(photo.filename):
-            # Salvar imagem localmente
+        # Validar e salvar a foto
+        if photo and allowed_image_file(photo.filename):
             filename = secure_filename(photo.filename)
             photo_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             photo.save(photo_path)
 
-            # Verificar se há uma pessoa na foto usando o serviço cognitivo
-            detected_faces = FACE_CLIENT.face.detect_with_stream(open(photo_path, 'rb'))
-            if not detected_faces:
-                flash('A foto não contém uma pessoa válida.', 'error')
+            # Verificar se há uma pessoa na foto usando o serviço cognitivo do Azure
+            try:
+                with open(photo_path, 'rb') as photo_file:
+                    detected_faces = FACE_CLIENT.face.detect_with_stream(photo_file)
+                if not detected_faces:
+                    flash('A foto não contém uma pessoa válida.', 'error')
+                    return redirect(url_for('register'))
+            except Exception as e:
+                flash(f"Erro ao detectar rosto na foto: {str(e)}", 'error')
                 return redirect(url_for('register'))
 
             # Inserir no banco de dados
@@ -91,7 +101,6 @@ def register():
             cursor.close()
 
             # Enviar os arquivos para as VMs
-            # Enviar foto para a VM Windows e documento para a VM Linux
             vm_windows_ip = '4.228.62.9'
             vm_linux_ip = '4.228.62.17'
             vm_user = 'azureuser'
@@ -104,7 +113,7 @@ def register():
             # Enviar a foto para a VM Windows
             send_file_to_vm(vm_windows_ip, vm_user, vm_password, photo_path, remote_photo_path_windows)
             
-            # Salvar o documento localmente
+            # Salvar o documento localmente, independentemente da extensão
             document_filename = secure_filename(document.filename)
             document_path = os.path.join(app.config['UPLOAD_FOLDER'], document_filename)
             document.save(document_path)
@@ -114,6 +123,10 @@ def register():
 
             flash('Usuário registrado com sucesso e arquivos enviados!', 'success')
             return redirect(url_for('index'))
+
+        else:
+            flash('Por favor, envie uma foto válida (png, jpg, jpeg).', 'error')
+            return redirect(url_for('register'))
 
     return render_template('register.html')
 
