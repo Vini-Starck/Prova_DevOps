@@ -6,7 +6,7 @@ import logging
 from werkzeug.utils import secure_filename
 from azure.cognitiveservices.vision.face import FaceClient
 from msrest.authentication import CognitiveServicesCredentials
-from Pillow import Image
+from PIL import Image
 
 app = Flask(__name__)
 app.secret_key = 'ff91935200508524ead9d3e6220966a3'
