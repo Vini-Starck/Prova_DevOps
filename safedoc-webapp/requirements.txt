@@ -1,4 +1,6 @@
-Flask
+flask
 pyodbc
 azure-cognitiveservices-vision-face
 requests
+paramiko
+werkzeug
