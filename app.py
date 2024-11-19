@@ -4,16 +4,22 @@ import pyodbc
 import paramiko
 import logging
 from werkzeug.utils import secure_filename
-from azure.cognitiveservices.vision.face import FaceClient
+from azure.core.credentials import AzureKeyCredential
+from azure.ai.vision.face import FaceClient
 from msrest.authentication import CognitiveServicesCredentials
+import uuid
 
+# Configurações do Flask
 app = Flask(__name__)
 app.secret_key = 'ff91935200508524ead9d3e6220966a3'
 
 # Configurações do Azure
-FACE_API_KEY = 'FGwaQzEIAtIhWT3U9uvOsPTvMFEUuFQYYWTwEK0vkKbLkXxISZG3JQQJ99AKACZoyfiXJ3w3AAAKACOGpBd6'
-FACE_API_ENDPOINT = 'https://safedoc-servicecog.cognitiveservices.azure.com/'
+FACE_API_KEY = 'YOUR_FACE_API_KEY'  # Substitua pela sua chave de API do Azure
+FACE_API_ENDPOINT = 'YOUR_FACE_API_ENDPOINT'  # Substitua pelo seu endpoint do Azure
 FACE_CLIENT = FaceClient(FACE_API_ENDPOINT, CognitiveServicesCredentials(FACE_API_KEY))
+
+# Configuração de um Person Group único
+PERSON_GROUP_ID = str(uuid.uuid4())  # ID único para o grupo de pessoas
 
 # Configuração do banco de dados
 SERVER = 'sqlserver-safedoc.database.windows.net'
@@ -63,6 +69,22 @@ def send_file_to_vm(vm_ip, vm_user, vm_password, file_path, remote_path):
 # Configuração de logging
 logging.basicConfig(level=logging.DEBUG)
 
+# Função para criar um Person Group na Azure
+def create_person_group():
+    try:
+        FACE_CLIENT.person_group.create(
+            person_group_id=PERSON_GROUP_ID,
+            name="Users Group"
+        )
+        logging.debug(f"Person group {PERSON_GROUP_ID} criado com sucesso!")
+    except Exception as e:
+        logging.error(f"Erro ao criar o grupo de pessoas: {str(e)}")
+        return False
+    return True
+
+# Criar o Person Group assim que o aplicativo iniciar
+create_person_group()
+
 # Página inicial
 @app.route('/')
 def index():
@@ -99,48 +121,63 @@ def register():
 
                 # Verificar se há uma pessoa na foto usando o serviço cognitivo
                 try:
-                    # Tente abrir e verificar a imagem antes de enviar
                     with open(photo_path, 'rb') as photo_file:
                         detected_faces = FACE_CLIENT.face.detect_with_stream(photo_file)
                     if not detected_faces:
                         flash('A foto não contém uma pessoa válida.', 'error')
                         return redirect(url_for('register'))
                     logging.debug("Rosto detectado com sucesso!")
+
+                    # Adicionar a face ao Person Group
+                    person = FACE_CLIENT.person_group_person.create(
+                        PERSON_GROUP_ID, 
+                        name=name
+                    )
+
+                    # Adicionar a face do usuário ao Person Group
+                    FACE_CLIENT.person_group_person.add_face_from_stream(
+                        PERSON_GROUP_ID,
+                        person.person_id,
+                        photo_file
+                    )
+                    logging.debug(f"Face de {name} adicionada ao Person Group com sucesso!")
+
+                    # Inserir no banco de dados (incluindo o ID do Person Group)
+                    conn = get_db_connection()
+                    cursor = conn.cursor()
+                    cursor.execute("INSERT INTO Users (Name, Email, PhotoPath, PersonId) VALUES (?, ?, ?, ?)", 
+                                   (name, email, photo_path, person.person_id))
+                    conn.commit()
+                    cursor.close()
+                    logging.debug("Usuário inserido no banco de dados com sucesso!")
+
+                    # Enviar os arquivos para as VMs
+                    vm_windows_ip = '4.228.62.9'
+                    vm_linux_ip = '4.228.62.17'
+                    vm_user = 'azureuser'
+                    vm_password = 'Admsenac123!'
+
+                    # Caminho remoto para a foto na VM Windows (diretório C:\Users\azureuser\Pictures)
+                    remote_photo_path_windows = f'C:/Users/azureuser/Pictures/{filename}'
+                    remote_document_path_linux = f'/home/azureuser/documentos/{document_filename}'
+
+                    # Enviar a foto para a VM Windows
+                    send_file_to_vm(vm_windows_ip, vm_user, vm_password, photo_path, remote_photo_path_windows)
+
+                    # Salvar o documento e enviar para a VM Linux
+                    document_filename = secure_filename(document.filename)
+                    document_path = os.path.join(app.config['UPLOAD_FOLDER'], document_filename)
+                    document.save(document_path)
+                    send_file_to_vm(vm_linux_ip, vm_user, vm_password, document_path, remote_document_path_linux)
+
+                    flash('Usuário registrado com sucesso e arquivos enviados!', 'success')
+                    logging.debug("Processo concluído com sucesso!")
+                    return redirect(url_for('query'))
+
                 except Exception as e:
                     flash(f"Erro ao detectar rosto na foto: {str(e)}", 'error')
                     logging.error(f"Erro ao detectar rosto na foto: {str(e)}")
                     return redirect(url_for('register'))
-
-                # Inserir no banco de dados
-                conn = get_db_connection()
-                cursor = conn.cursor()
-                cursor.execute("INSERT INTO Users (Name, Email, PhotoPath) VALUES (?, ?, ?)", (name, email, photo_path))
-                conn.commit()
-                cursor.close()
-                logging.debug("Usuário inserido no banco de dados com sucesso!")
-
-                # Enviar os arquivos para as VMs
-                vm_windows_ip = '4.228.62.9'
-                vm_linux_ip = '4.228.62.17'
-                vm_user = 'azureuser'
-                vm_password = 'Admsenac123!'
-
-                # Caminho remoto para a foto na VM Windows (diretório C:\Users\azureuser\Pictures)
-                remote_photo_path_windows = f'C:/Users/azureuser/Pictures/{filename}'
-                remote_document_path_linux = f'/home/azureuser/documentos/{document_filename}'
-                # Enviar a foto para a VM Windows
-                send_file_to_vm(vm_windows_ip, vm_user, vm_password, photo_path, remote_photo_path_windows)
-
-                # Salvar o documento e enviar para a VM Linux
-                document_filename = secure_filename(document.filename)
-                document_path = os.path.join(app.config['UPLOAD_FOLDER'], document_filename)
-                document.save(document_path)
-                send_file_to_vm(vm_linux_ip, vm_user, vm_password, document_path, remote_document_path_linux)
-
-
-                flash('Usuário registrado com sucesso e arquivos enviados!', 'success')
-                logging.debug("Processo concluído com sucesso!")
-                return redirect(url_for('query'))
 
             else:
                 flash('Por favor, envie uma foto válida (png, jpg, jpeg).', 'error')
