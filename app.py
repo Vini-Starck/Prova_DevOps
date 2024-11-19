@@ -4,7 +4,7 @@ import pyodbc
 import paramiko
 import logging
 from werkzeug.utils import secure_filename
-from azure.cognitiveservices.vision.face import FaceClient
+from azure.cognitiveservices.vision.face import FaceClient, FaceAPIError
 from msrest.authentication import CognitiveServicesCredentials
 
 app = Flask(__name__)
@@ -101,12 +101,21 @@ def register():
                 try:
                     with open(photo_path, 'rb') as photo_file:
                         detected_faces = FACE_CLIENT.face.detect_with_stream(photo_file)
+
                     if not detected_faces:
                         flash('A foto não contém uma pessoa válida.', 'error')
                         return redirect(url_for('register'))
+
                     logging.debug("Rosto detectado com sucesso!")
+
+                except FaceAPIError as api_error:
+                    flash(f"Erro de API ao detectar rosto: {api_error.message}", 'error')
+                    logging.error(f"Erro de API: {api_error}")
+                    return redirect(url_for('register'))
+
                 except Exception as e:
-                    flash(f"Erro ao detectar rosto na foto: {str(e)}", 'error')
+                    flash(f"Ocorreu um erro inesperado: {str(e)}", 'error')
+                    logging.error(f"Erro inesperado: {str(e)}")
                     return redirect(url_for('register'))
 
                 # Inserir no banco de dados
