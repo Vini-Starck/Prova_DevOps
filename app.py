@@ -5,7 +5,7 @@ import paramiko
 import logging
 from werkzeug.utils import secure_filename
 from azure.cognitiveservices.vision.face import FaceClient
-from azure.core.credentials import AzureKeyCredential  # Atualizando para usar a credencial correta
+from msrest.authentication import CognitiveServicesCredentials  # Importando a classe correta
 
 app = Flask(__name__)
 app.secret_key = 'ff91935200508524ead9d3e6220966a3'
@@ -14,8 +14,8 @@ app.secret_key = 'ff91935200508524ead9d3e6220966a3'
 FACE_API_KEY = 'FGwaQzEIAtIhWT3U9uvOsPTvMFEUuFQYYWTwEK0vkKbLkXxISZG3JQQJ99AKACZoyfiXJ3w3AAAKACOGpBd6'
 FACE_API_ENDPOINT = 'https://safedoc-servicecog.cognitiveservices.azure.com/'
 
-# Instância correta do FaceClient
-FACE_CLIENT = FaceClient(FACE_API_ENDPOINT, AzureKeyCredential(FACE_API_KEY))
+# Usando CognitiveServicesCredentials para autenticação
+FACE_CLIENT = FaceClient(FACE_API_ENDPOINT, CognitiveServicesCredentials(FACE_API_KEY))
 
 # Configuração do banco de dados
 SERVER = 'sqlserver-safedoc.database.windows.net'
@@ -26,7 +26,7 @@ DRIVER = '{ODBC Driver 17 for SQL Server}'
 
 # Configuração do diretório de uploads
 UPLOAD_FOLDER = 'uploads/'
-ALLOWED_EXTENSIONS_IMAGES = {'png', 'jpeg', 'jpg'}
+ALLOWED_EXTENSIONS_IMAGES = {'png', 'jpeg'}
 ALLOWED_EXTENSIONS_DOCS = {'pdf', 'txt', 'docx', 'xlsx', 'pptx', 'csv'}
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
@@ -101,14 +101,13 @@ def register():
 
                 # Verificar se há uma pessoa na foto usando o serviço cognitivo
                 try:
+                    # Tente abrir e verificar a imagem antes de enviar
                     with open(photo_path, 'rb') as photo_file:
                         detected_faces = FACE_CLIENT.face.detect_with_stream(photo_file)
-
                     if not detected_faces:
                         flash('A foto não contém uma pessoa válida.', 'error')
                         return redirect(url_for('register'))
                     logging.debug("Rosto detectado com sucesso!")
-
                 except Exception as e:
                     flash(f"Erro ao detectar rosto na foto: {str(e)}", 'error')
                     logging.error(f"Erro ao detectar rosto na foto: {str(e)}")
