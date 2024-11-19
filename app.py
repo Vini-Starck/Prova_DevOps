@@ -5,7 +5,8 @@ import paramiko
 import logging
 from werkzeug.utils import secure_filename
 from azure.cognitiveservices.vision.face import FaceClient
-from msrest.authentication import CognitiveServicesCredentials  # Importando a classe correta
+from msrest.authentication import CognitiveServicesCredentials
+from PIL import Image
 
 app = Flask(__name__)
 app.secret_key = 'ff91935200508524ead9d3e6220966a3'
@@ -13,8 +14,6 @@ app.secret_key = 'ff91935200508524ead9d3e6220966a3'
 # Configurações do Azure
 FACE_API_KEY = 'FGwaQzEIAtIhWT3U9uvOsPTvMFEUuFQYYWTwEK0vkKbLkXxISZG3JQQJ99AKACZoyfiXJ3w3AAAKACOGpBd6'
 FACE_API_ENDPOINT = 'https://safedoc-servicecog.cognitiveservices.azure.com/'
-
-# Usando CognitiveServicesCredentials para autenticação
 FACE_CLIENT = FaceClient(FACE_API_ENDPOINT, CognitiveServicesCredentials(FACE_API_KEY))
 
 # Configuração do banco de dados
@@ -65,6 +64,16 @@ def send_file_to_vm(vm_ip, vm_user, vm_password, file_path, remote_path):
 # Configuração de logging
 logging.basicConfig(level=logging.DEBUG)
 
+# Função para validar se a imagem está corrompida
+def is_valid_image(image_path):
+    try:
+        with Image.open(image_path) as img:
+            img.verify()  # Verifica se a imagem está corrompida
+        return True
+    except Exception as e:
+        logging.error(f"Imagem inválida: {e}")
+        return False
+
 # Página inicial
 @app.route('/')
 def index():
@@ -90,6 +99,11 @@ def register():
                 filename = secure_filename(photo.filename)
                 photo_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
                 logging.debug(f"Salvando foto em: {photo_path}")
+
+                # Verificar se a imagem é válida
+                if not is_valid_image(photo_path):
+                    flash('A imagem está corrompida ou é inválida.', 'error')
+                    return redirect(url_for('register'))
 
                 # Verificar o tamanho do arquivo (máximo 4MB)
                 if photo.content_length > 4 * 1024 * 1024:
@@ -129,7 +143,7 @@ def register():
 
                 # Caminho remoto para a foto na VM Windows (diretório C:\Users\azureuser\Pictures)
                 remote_photo_path_windows = f'C:/Users/azureuser/Pictures/{filename}'
-                remote_document_path_linux = f'/home/azureuser/documentos/{document_filename}'
+                remote_document_path_linux = f'/home/azureuser/documentos/{secure_filename(document.filename)}'
 
                 # Enviar a foto para a VM Windows
                 send_file_to_vm(vm_windows_ip, vm_user, vm_password, photo_path, remote_photo_path_windows)
