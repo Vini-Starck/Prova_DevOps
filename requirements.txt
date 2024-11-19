@@ -3,4 +3,4 @@ pyodbc==4.0.32
 paramiko==2.10.4
 werkzeug==2.2.2
 azure-core>=1.10.0
-azure-cognitiveservices-vision-face==0.9.0
+azure-cognitiveservices-vision-face==0.6.1
