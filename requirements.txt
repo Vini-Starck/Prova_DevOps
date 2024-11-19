@@ -4,4 +4,3 @@ azure-cognitiveservices-vision-face
 requests
 paramiko
 werkzeug
-logging
