@@ -25,7 +25,7 @@ DRIVER = '{ODBC Driver 17 for SQL Server}'
 
 # Configuração do diretório de uploads
 UPLOAD_FOLDER = 'uploads/'
-ALLOWED_EXTENSIONS_IMAGES = {'png', 'jpeg'}
+ALLOWED_EXTENSIONS_IMAGES = {'png', 'jpeg', 'jpg'}
 ALLOWED_EXTENSIONS_DOCS = {'pdf', 'txt', 'docx', 'xlsx', 'pptx', 'csv'}
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
@@ -71,7 +71,7 @@ def is_valid_image(image_path):
             img.verify()  # Verifica se a imagem é válida, sem precisar carregá-la completamente
             img.load()  # Força o carregamento completo da imagem
         return True
-    except Exception as e:
+    except (IOError, SyntaxError) as e:
         logging.error(f"Imagem inválida ou corrompida: {e}")
         return False
 
@@ -88,7 +88,7 @@ def register():
         try:
             logging.debug(f"Nome: {name}, Email: {email}")
 
-            # Validar e salvar a foto
+            # Verificar se a foto foi enviada e se é válida
             if photo and allowed_image_file(photo.filename):
                 logging.debug(f"Foto recebida: {photo.filename}")
                 filename = secure_filename(photo.filename)
@@ -129,8 +129,6 @@ def register():
                 cursor.close()
                 logging.debug("Usuário inserido no banco de dados com sucesso!")
 
-
-
                 # Enviar os arquivos para as VMs
                 vm_windows_ip = '4.228.62.9'
                 vm_linux_ip = '4.228.62.17'
@@ -153,7 +151,6 @@ def register():
                 flash('Usuário registrado com sucesso e arquivos enviados!', 'success')
                 logging.debug("Processo concluído com sucesso!")
                 return redirect(url_for('query'))
-                ...
 
             else:
                 flash('Por favor, envie uma foto válida (png, jpg, jpeg).', 'error')
