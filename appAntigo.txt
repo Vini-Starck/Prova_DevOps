@@ -1,24 +1,31 @@
+from flask import Flask, render_template, request, redirect, url_for, flash
 import os
 import pyodbc
 import paramiko
 import logging
-from flask import Flask, render_template, request, redirect, url_for, flash
 from werkzeug.utils import secure_filename
+from azure.cognitiveservices.vision.face import FaceClient
+from msrest.authentication import CognitiveServicesCredentials
+from PIL import Image
 
 app = Flask(__name__)
 app.secret_key = 'ff91935200508524ead9d3e6220966a3'
+
+# Configurações do Azure
+FACE_API_KEY = '1ZCQRsPeCOYdgsIGqFSP4DY9ATze48rWxLXu847Ec0fvWbeGCcNHJQQJ99AKACZoyfiXJ3w3AAAKACOGhRlw'
+FACE_API_ENDPOINT = 'https://safedoc-servicecog.cognitiveservices.azure.com/'
+FACE_CLIENT = FaceClient(FACE_API_ENDPOINT, CognitiveServicesCredentials(FACE_API_KEY))
 
 # Configuração do banco de dados
 SERVER = 'sqlserver-safedoc.database.windows.net'
 DATABASE = 'SafeDocDb'
 USERNAME = 'azureuser'
 PASSWORD = 'Admsenac123!'
-DRIVER = '{ODBC Driver 18 for SQL Server}'
+DRIVER = '{ODBC Driver 17 for SQL Server}'
 
 # Configuração do diretório de uploads
 UPLOAD_FOLDER = 'uploads/'
 ALLOWED_EXTENSIONS_IMAGES = {'png', 'jpeg', 'jpg'}
-ALLOWED_EXTENSIONS_DOCUMENTS = {'pdf', 'docx', 'txt'}
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
@@ -26,38 +33,14 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
-# Função para verificar se a extensão do arquivo é permitida
-def allowed_file(filename, allowed_extensions):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in allowed_extensions
+# Função para verificar se a extensão do arquivo de imagem é permitida
+def allowed_image_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS_IMAGES
 
 # Função para conectar ao banco de dados
 def get_db_connection():
     conn = pyodbc.connect(f'DRIVER={DRIVER};SERVER={SERVER};PORT=1433;DATABASE={DATABASE};UID={USERNAME};PWD={PASSWORD}')
     return conn
-
-# Função para verificar se a tabela 'Users' existe
-def check_if_table_exists(cursor, table_name):
-    cursor.execute(f"SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = ?", (table_name,))
-    result = cursor.fetchone()
-    return result[0] > 0
-
-# Função para criar a tabela de usuários
-def create_users_table(cursor):
-    create_table_query = """
-    CREATE TABLE Users (
-        ID INT PRIMARY KEY IDENTITY,
-        Name NVARCHAR(100),
-        Email NVARCHAR(100),
-        PhotoPath NVARCHAR(255),
-        DocumentPath NVARCHAR(255)
-    );
-    """
-    cursor.execute(create_table_query)
-
-# Função para inserir um usuário no banco de dados
-def insert_user(cursor, name, email, photo_path, document_path):
-    insert_query = "INSERT INTO Users (Name, Email, PhotoPath, DocumentPath) VALUES (?, ?, ?, ?)"
-    cursor.execute(insert_query, (name, email, photo_path, document_path))
 
 # Função para enviar arquivos para a VM via SFTP (usando paramiko)
 def send_file_to_vm(vm_ip, vm_user, vm_password, file_path, remote_path):
@@ -76,6 +59,17 @@ def send_file_to_vm(vm_ip, vm_user, vm_password, file_path, remote_path):
 # Configuração de logging
 logging.basicConfig(level=logging.DEBUG)
 
+# Verificar se a imagem é válida (não corrompida e não vazia)
+def is_valid_image(image_path):
+    try:
+        with Image.open(image_path) as img:
+            img.verify()  # Verifica se a imagem é válida, sem precisar carregá-la completamente
+            img.load()  # Força o carregamento completo da imagem
+        return True
+    except (IOError, SyntaxError) as e:
+        logging.error(f"Imagem inválida ou corrompida: {e}")
+        return False
+
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
@@ -90,15 +84,27 @@ def register():
             logging.debug(f"Nome: {name}, Email: {email}")
 
             # Verificar se a foto foi enviada e se é válida
-            if photo and allowed_file(photo.filename, ALLOWED_EXTENSIONS_IMAGES):
+            if photo and allowed_image_file(photo.filename):
                 logging.debug(f"Foto recebida: {photo.filename}")
                 filename = secure_filename(photo.filename)
                 photo_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
                 logging.debug(f"Salvando foto em: {photo_path}")
-
+                
                 # Salva a foto no diretório de uploads
                 photo.save(photo_path)
                 logging.debug(f"{photo_path} salva com sucesso")
+
+                # Verificar se a imagem foi salva corretamente
+                if not os.path.exists(photo_path):
+                    flash('Erro ao salvar a imagem.', 'error')
+                    logging.debug(f"Erro ao salvar imagem")
+                    return redirect(url_for('register'))
+                    
+                # Verifica se a imagem é válida
+                if not is_valid_image(photo_path):
+                    flash('A imagem está corrompida ou é inválida.', 'error')
+                    logging.debug(f"Imagem não é válida")
+                    return redirect(url_for('register'))
 
                 # Verificar o tamanho do arquivo (máximo 4MB)
                 if photo.content_length > 4 * 1024 * 1024:
@@ -106,34 +112,53 @@ def register():
                     logging.debug(f"Imagem muito grande")
                     return redirect(url_for('register'))
 
-                # Verificar o tipo de conteúdo
                 logging.debug(f"Tipo de conteúdo do arquivo: {photo.content_type}")
                 logging.debug(f"Tamanho do arquivo: {os.path.getsize(photo_path)} bytes")
 
-                # Verificar se o documento foi enviado e se é válido
-                document_path = None
-                if document and allowed_file(document.filename, ALLOWED_EXTENSIONS_DOCUMENTS):
-                    document_filename = secure_filename(document.filename)
-                    document_path = os.path.join(app.config['UPLOAD_FOLDER'], document_filename)
-                    document.save(document_path)
-                    logging.debug(f"Documento salvo com sucesso em: {document_path}")
-                else:
-                    flash('Por favor, envie um documento válido (pdf, docx, txt).', 'error')
+                # Abrir o arquivo em modo binário
+                try:
+                    with open(photo_path, 'rb') as photo_file:
+                        logging.debug("Arquivo de imagem aberto corretamente em modo binário.")
+                        # Garantir que o arquivo está posicionado no início
+                        photo_file.seek(0)
+                        
+                        if photo_file:
+                            logging.debug("Arquivo de imagem é válido e pronto para detecção.")
+                            
+                            # Tentar detectar rostos usando o modelo de detecção simples
+                            try:
+                                detected_faces = FACE_CLIENT.face.detect_with_stream(
+                                    photo_file,
+                                    return_face_id=True,  # Mantém a detecção do ID do rosto
+                                    return_face_landmarks=False,  # Não precisa dos marcos faciais
+                                    recognition_model='recognition_01',  # Remova isso ou altere conforme necessário
+                                    detection_model='detection_01'  # Modelo de detecção simples
+                                )
+                            except Exception as e:
+                                logging.error(f"Erro ao detectar rosto: {str(e)}")
+                                if hasattr(e, 'response') and e.response is not None:
+                                    logging.error(f"Resposta da API: {e.response.text}")
+                                flash(f"Erro ao detectar rosto na foto: {str(e)}", 'error')
+                                return redirect(url_for('register'))  # Redireciona no caso de erro
+
+                            if not detected_faces:
+                                flash('A foto não contém um rosto válido.', 'error')
+                                return redirect(url_for('register'))
+
+                            logging.debug("Rosto detectado com sucesso!")
+                        else:
+                            flash('Erro ao abrir a foto. O arquivo não é válido.', 'error')
+                            return redirect(url_for('register'))
+
+                except Exception as e:
+                    flash(f"Erro ao detectar rosto na foto: {str(e)}", 'error')
+                    logging.error(f"Erro ao detectar rosto na foto: {str(e)}")
                     return redirect(url_for('register'))
 
-                # Conectar ao banco de dados
+                # Inserir no banco de dados
                 conn = get_db_connection()
                 cursor = conn.cursor()
-
-                # Verificar se a tabela 'Users' existe, se não, criar
-                if not check_if_table_exists(cursor, 'Users'):
-                    logging.debug("Tabela 'Users' não existe. Criando tabela...")
-                    create_users_table(cursor)
-                    conn.commit()
-                    logging.debug("Tabela 'Users' criada com sucesso!")
-
-                # Inserir o usuário na tabela 'Users'
-                insert_user(cursor, name, email, photo_path, document_path)
+                cursor.execute("INSERT INTO Users (Name, Email, PhotoPath) VALUES (?, ?, ?)", (name, email, photo_path))
                 conn.commit()
                 cursor.close()
                 logging.debug("Usuário inserido no banco de dados com sucesso!")
@@ -151,7 +176,10 @@ def register():
                 # Enviar a foto para a VM Windows
                 send_file_to_vm(vm_windows_ip, vm_user, vm_password, photo_path, remote_photo_path_windows)
 
-                # Enviar o documento para a VM Linux
+                # Salvar o documento e enviar para a VM Linux
+                document_filename = secure_filename(document.filename)
+                document_path = os.path.join(app.config['UPLOAD_FOLDER'], document_filename)
+                document.save(document_path)
                 send_file_to_vm(vm_linux_ip, vm_user, vm_password, document_path, remote_document_path_linux)
 
                 flash('Usuário registrado com sucesso e arquivos enviados!', 'success')
@@ -169,10 +197,15 @@ def register():
 
     return render_template('register.html')
 
+
+
+
+
 # Página inicial
 @app.route('/')
 def index():
     return render_template('index.html')
+
 
 # Página de consulta
 @app.route('/query', methods=['GET', 'POST'])
